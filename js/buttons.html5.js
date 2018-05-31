@@ -472,7 +472,7 @@ function _createNode( doc, nodeName, opts ) {
  * @return {int}         Column width
  */
 function _excelColWidth( data, col ) {
-	var max = data.header[col].length;
+	var max = data.header[0][col].length;
 	var len, lineSplit, str;
 
 	if ( data.footer && data.footer[col].length > max ) {
@@ -1142,18 +1142,60 @@ DataTable.ext.buttons.excelHtml5 = {
 		var exportInfo = dt.buttons.exportInfo( config );
 		if ( exportInfo.title ) {
 			addRow( [exportInfo.title], rowPos );
-			mergeCells( rowPos, data.header.length-1 );
+			mergeCells( rowPos, data.header[0].length-1 );
 		}
 
 		if ( exportInfo.messageTop ) {
 			addRow( [exportInfo.messageTop], rowPos );
-			mergeCells( rowPos, data.header.length-1 );
+			mergeCells( rowPos, data.header[0].length-1 );
 		}
 
+		var merges = [], mgCnt = 0;
 		// Table itself
 		if ( config.header ) {
-			addRow( data.header, rowPos );
-			$('row:last c', rels).attr( 's', '2' ); // bold
+			//for each header row
+			for(var i=0;i<data.header.length;i++){
+				//for each header col in the row
+				for(var j=0;j<data.header[i].length;j++){
+					//look for a non-colspan/rowspan cell
+					if(data.header[i][j] != ""){
+						var startRow = i, startCol = j, endRow = i+1, endCol = j+1;
+						//lookahead for col
+						while(endCol < data.header[i].length && data.header[i][endCol] == ""){
+							endCol++;
+						}
+						endCol--;
+						if(startCol == endCol){
+							//lookahead for row
+							while(endRow < data.header.length && data.header[endRow][j] == ""){
+								data.header[endRow][j] = 'X';
+								endRow++;
+							}
+						}
+						endRow--;
+						//create and store merge ranges
+						if(startRow != endRow || startCol != endCol){
+							var sC = String.fromCharCode(65+startCol), sR = startRow+rowPos+1, eC = String.fromCharCode(65+endCol), eR = endRow+rowPos+1;
+							merges[mgCnt] = sC + "" + sR;
+							if(endCol > startCol){
+								merges[mgCnt] = merges[mgCnt]+":"+eC;
+							}else{
+								merges[mgCnt] = merges[mgCnt]+":"+sC;
+							}
+							if(endRow > startRow){
+								merges[mgCnt] = merges[mgCnt]+eR;
+							}else{
+								merges[mgCnt] = merges[mgCnt]+sR;
+							}
+							mgCnt++;
+						}
+					}
+				}
+			}
+			for(var i=0;i<data.header.length;i++){
+				addRow(data.header[i], rowPos);
+				$("row:last c", rels).attr("s", "2");
+			}
 		}
 
 		for ( var n=0, ie=data.body.length ; n<ie ; n++ ) {
@@ -1165,6 +1207,15 @@ DataTable.ext.buttons.excelHtml5 = {
 			$('row:last c', rels).attr( 's', '2' ); // bold
 		}
 
+		if(mgCnt > 0){
+			var mergeCells = $('mergeCells', rels);
+			
+			mergeCells.attr('count', parseFloat(mergeCells.attr('count')) + mgCnt);
+			for(var i=0;i<mgCnt;i++){
+				mergeCells[0].appendChild(_createNode(rels, 'mergeCell', {attr:{ref:merges[i]}}));
+			}
+		}
+		
 		// Below the table
 		if ( exportInfo.messageBottom ) {
 			addRow( [exportInfo.messageBottom], rowPos );
@@ -1175,7 +1226,7 @@ DataTable.ext.buttons.excelHtml5 = {
 		var cols = _createNode( rels, 'cols' );
 		$('worksheet', rels).prepend( cols );
 
-		for ( var i=0, ien=data.header.length ; i<ien ; i++ ) {
+		for ( var i=0, ien=data.header[0].length ; i<ien ; i++ ) {
 			cols.appendChild( _createNode( rels, 'col', {
 				attr: {
 					min: i+1,
@@ -1265,14 +1316,17 @@ DataTable.ext.buttons.pdfHtml5 = {
 		var info = dt.buttons.exportInfo( config );
 		var rows = [];
 
-		if ( config.header ) {
-			rows.push( $.map( data.header, function ( d ) {
-				return {
-					text: typeof d === 'string' ? d : d+'',
-					style: 'tableHeader'
-				};
-			} ) );
+		if ( config.header ) { 
+			for(var i=0;i<data.header.length;i++){
+				rows.push( $.map( data.header[i], function ( d ) {
+					return {
+						text: typeof d === 'string' ? d : d+'',
+						style: 'tableHeader'
+					};
+				} ) );
+			}
 		}
+
 
 		for ( var i=0, ien=data.body.length ; i<ien ; i++ ) {
 			rows.push( $.map( data.body[i], function ( d ) {

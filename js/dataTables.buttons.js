@@ -930,6 +930,79 @@ Buttons.background = function ( show, className, fade ) {
 	}
 };
 
+/*Ref: https://datatables.net/forums/discussion/40854/how-to-add-second-footer-to-print-in-tfoot?*/
+var getHeaders = function( dt, config ){
+	var invisibleColumns = [];
+	if(!config.columns.includes(":visible")){//includes invisible columns
+		var maxColumns = dt.columns()[0].length;
+		for(var i=0;i<maxColumns;i++){
+			if(!dt.column(i).visible()){
+				invisibleColumns.push(i);
+				dt.column(i).visible(true);
+			}
+		}
+	}
+	var thRows = dt.settings()[0].nTHead.rows;
+	var numRows = thRows.length;
+	var matrix = [];
+ 
+	// Iterate over each row of the header and add information to matrix.
+	for ( var rowIdx = 0;  rowIdx < numRows;  rowIdx++ ) {
+		var $row = $(thRows[rowIdx]);
+ 
+		// Iterate over actual columns specified in this row.
+		var $ths = $row.children("th");
+		for ( var colIdx = 0;  colIdx < $ths.length;  colIdx++ )
+		{
+			var $th = $($ths.get(colIdx));
+			if(config.columns.length < 1 || $th.is(config.columns)){
+				var colspan = $th.attr("colspan") || 1;
+				var rowspan = $th.attr("rowspan") || 1;
+				var colCount = 0;
+				
+				// ----- add this cell's title to the matrix
+				if (matrix[rowIdx] === undefined) {
+					matrix[rowIdx] = [];  // create array for this row
+				}
+				// find 1st empty cell
+				for ( var j = 0;  j < (matrix[rowIdx]).length;  j++, colCount++ ) {
+					if ( matrix[rowIdx][j] === "PLACEHOLDER" ) {
+						break;
+					}
+				}
+				var myColCount = colCount;
+				matrix[rowIdx][colCount++] = $th.text();
+			 
+				// ----- If title cell has colspan, add empty titles for extra cell width.
+				for ( var j = 1;  j < colspan;  j++ ) {
+					matrix[rowIdx][colCount++] = "";
+				}
+				
+				// ----- If title cell has rowspan, add empty titles for extra cell height.
+				for ( var i = 1;  i < rowspan;  i++ ) {
+					var thisRow = rowIdx+i;
+					if ( matrix[thisRow] === undefined ) {
+						matrix[thisRow] = [];
+					}
+					// First add placeholder text for any previous columns.                
+					for ( var j = (matrix[thisRow]).length;  j < myColCount;  j++ ) {
+						matrix[thisRow][j] = "PLACEHOLDER";
+					}
+					for ( var j = 0;  j < colspan;  j++ ) {  // and empty for my columns
+						matrix[thisRow][myColCount+j] = "";
+					}
+				}
+			}
+		}
+	}
+	if(invisibleColumns.length>0){
+		invisibleColumns.forEach(function(item){
+			dt.column(item).visible(false);
+		});
+	}
+	return matrix;
+};
+
 /**
  * Instance selector - select Buttons instances based on an instance selector
  * value from the buttons assigned to a DataTable. This is only useful if
@@ -1199,6 +1272,7 @@ $.extend( _dtButtons, {
 
 			var position = config._collection.css( 'position' );
 
+
 			if ( multiLevel && position === 'absolute' ) {
 				config._collection.css( {
 					top: multiLevel.top,
@@ -1281,6 +1355,16 @@ $.extend( _dtButtons, {
 						var back = $.fn.addBack ? 'addBack' : 'andSelf';
 
 						if ( ! $(e.target).parents()[back]().filter( config._collection ).length ) {
+
+
+
+
+
+
+
+
+
+
 							close();
 						}
 					} )
@@ -1290,8 +1374,10 @@ $.extend( _dtButtons, {
 						}
 					} );
 
+
 				if ( config.autoClose ) {
 					dt.on( 'buttons-action.b-internal', function () {
+
 						close();
 					} );
 				}
@@ -1741,6 +1827,7 @@ var _exportData = function ( dt, inOpts )
 	var config = $.extend( true, {}, {
 		rows:           null,
 		columns:        '',
+		grouped_array_index:[],
 		modifier:       {
 			search: 'applied',
 			order:  'applied'
@@ -1792,12 +1879,8 @@ var _exportData = function ( dt, inOpts )
 	};
 
 
-	var header = dt.columns( config.columns ).indexes().map( function (idx) {
-		var el = dt.column( idx ).header();
-		return config.format.header( el.innerHTML, idx, el );
-	} ).toArray();
-
-	var footer = dt.table().footer() ?
+	var headerMatrix = getHeaders( dt, config );
+var footer = dt.table().footer() ?
 		dt.columns( config.columns ).indexes().map( function (idx) {
 			var el = dt.column( idx ).footer();
 			return config.format.footer( el ? el.innerHTML : '', idx, el );
@@ -1815,34 +1898,106 @@ var _exportData = function ( dt, inOpts )
 	}
 
 	var rowIndexes = dt.rows( config.rows, modifier ).indexes().toArray();
-	var selectedCells = dt.cells( rowIndexes, config.columns );
-	var cells = selectedCells
-		.render( config.orthogonal )
-		.toArray();
-	var cellNodes = selectedCells
-		.nodes()
-		.toArray();
+	var pageSize = dt.page.len();
+	var selectedCells = dt.page.len(-1).draw(false).cells( rowIndexes, config.columns );
+	dt.page.len(pageSize);
+	var cells = selectedCells.render( config.orthogonal ).toArray();
+	var cellNodes = selectedCells.nodes().toArray();
 
-	var columns = header.length;
-	var rows = columns > 0 ? cells.length / columns : 0;
-	var body = [];
-	var cellCounter = 0;
-
-	for ( var i=0, ien=rows ; i<ien ; i++ ) {
-		var row = [ columns ];
-
-		for ( var j=0 ; j<columns ; j++ ) {
-			row[j] = config.format.body( cells[ cellCounter ], i, j, cellNodes[ cellCounter ] );
-			cellCounter++;
+	var grouped_array_index     = config.grouped_array_index;
+	var no_of_columns           = headerMatrix[0].length;
+	var no_of_rows              = no_of_columns > 0 ? cells.length / no_of_columns : 0;
+	var body_data               = new Array( no_of_rows );
+	var body_with_nodes         = new Array( no_of_rows );
+		var cellCounter             = 0;
+	var format = config.format, settings = dt.settings().init();
+	var col_idx = dt.columns(config.columns).indexes().toArray();
+ 
+	//read rowGroup dataSrc
+	
+		for (var i = 0, ien = no_of_rows; i < ien; i++){
+				var rows            = new Array( no_of_columns ), rows_with_nodes = "";
+ 
+				for ( var j=0 ; j < no_of_columns ; j++ )
+				{
+						rows[j]             = config.format.body( cells[ cellCounter ], i, col_idx[j], cellNodes[ cellCounter ] );
+						rows_with_nodes  += config.format.body( cellNodes[ cellCounter ], i, col_idx[j], cells[ cellCounter ] ).outerHTML;
+						cellCounter++;
+				}
+ 
+				body_data[i]                = rows;
+				body_with_nodes[i]          = '<tr>' + rows_with_nodes + '</tr>';
 		}
+ 
+		/******************************************** GROUP DATA *****************************************************/
+		var row_data_array = dt.rows().data();
+		var sLastGroup = "", inner_html = "", table_data_with_node = "", grouped_index;
+		var individual_group_array = [], sub_group_array = [], total_group_array = [], table_data = [];
+		var no_of_splices = 0;  //to keep track of no of element insertion into the array as index changes after splicing one element
+ 
+		for (var i = 0, row_length = body_with_nodes.length; i < row_length; i++){
+				sub_group_array[i]              = [];
+				individual_group_array[i]       = [];
+ 
+				var sGroup                      = '';
+ 
+				for(var k = 0; k < grouped_array_index.length; k++){
+						sGroup                          = row_data_array[i][grouped_array_index[k]];
+						inner_html                      = settings.rowGroup.startRender?settings.rowGroup.startRender(dt, sGroup):sGroup;
+						grouped_index                   = k;
+				}
+ 
+				if ( sGroup !== sLastGroup )
+				{
 
-		body[i] = row;
+			if(sLastGroup !== "" && settings.rowGroup && settings.rowGroup.endRender){
+				var endRenderTr = settings.rowGroup.endRender(dt, sLastGroup);
+				
+				for(var $column_index=0;$column_index<no_of_columns;$column_index++){
+					table_data[$column_index] = endRenderTr.children(':nth-child('+($column_index+1)+')')[0].innerText;
+				}
+				body_with_nodes.splice(i+no_of_splices, 0, endRenderTr.html());
+				body_data.splice(i+no_of_splices, 0, table_data);
+				no_of_splices++;
+			}
+			
+			table_data = [];
+			table_data_with_node = "";
+						for(var $column_index = 0;$column_index < no_of_columns;$column_index++)
+						{
+								if($column_index === 0)
+								{
+										table_data_with_node += '<td style="border-left:none;border-right:none" colspan="'+no_of_columns+'">'+inner_html+'</td>';
+										table_data[$column_index] = inner_html + " ";
+								}
+								else
+								{
+										table_data[$column_index]   = '';
+								}
+						}
+ 
+						body_with_nodes.splice(i + no_of_splices, 0, '<tr class="group group-start group_'+grouped_index+' grouped-array-index_'+grouped_array_index[grouped_index]+'">'+table_data_with_node+'</tr>');
+						body_data.splice(i + no_of_splices, 0, table_data);
+						no_of_splices++;
+						sLastGroup = sGroup;
+				}
+		}
+	if(sLastGroup !== "" && settings.rowGroup && settings.rowGroup.endRender){
+		var endRenderTr = settings.rowGroup.endRender(dt, sLastGroup);
+		
+		for(var $column_index=0;$column_index<no_of_columns;$column_index++){
+			table_data[$column_index] = endRenderTr.children(':nth-child('+($column_index+1)+')')[0].innerText;
+		}
+		body_with_nodes.splice(i+no_of_splices, 0, endRenderTr.html());
+		body_data.splice(i+no_of_splices, 0, table_data);
+		no_of_splices++;
 	}
-
+	
 	return {
-		header: header,
+		header: headerMatrix,
 		footer: footer,
-		body:   body
+		body: body_data,
+		body_with_nodes:body_with_nodes
 	};
 };
 
